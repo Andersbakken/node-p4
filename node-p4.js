@@ -85,7 +85,7 @@ function startNext()
                 // console.log("shitballs",
                 --liveProcesses;
                 if (error) {
-                    console.log("Got error", error);
+                    console.log("Got error for:\n", proc.exec, proc.args.join(" "), "\n", error);
                     if (proc.cb)
                         proc.cb();
                 } else {
@@ -278,7 +278,7 @@ if (argv["input"] && argv.repo && argv["output-branch"]) {
                     p4root = p4root.substr(0, p4root.length - 3);
                 }
 
-                changes.splice(1);
+                // changes.splice(1);
 
                 function nextChange() {
                     var change = changes.splice(0, 1)[0];
@@ -292,6 +292,7 @@ if (argv["input"] && argv.repo && argv["output-branch"]) {
                     var state = Initial;
                     var added = [];
                     var copies = [];
+                    var deletes = [];
                     function processLines(lines) {
                         // var revisions = {};
                         // console.log("got lines", change, lines.length);
@@ -326,13 +327,14 @@ if (argv["input"] && argv.repo && argv["output-branch"]) {
                                 // if (matches)
                                 //     console.log(matches[1], p4root);
                                 if (matches && matches[1].lastIndexOf(p4root, 0) == 0) {
-                                    var sourceFile = datadir + "depot" + matches[1] + "_" + matches[2] + "_" + change;
                                     var targetFile = argv.repo + "/" + matches[1].substr(p4root.length);
                                     ensureParentDir(targetFile);
-                                    // console.log(sourceFile.length);
-                                    // console.log("we're here", sourceFile, targetFile);
-                                    // process.exit(1);
-                                    copies.push([ sourceFile, targetFile ]);
+                                    if (matches[3] == "delete") {
+                                        deletes.push(targetFile);
+                                    } else {
+                                        var sourceFile = datadir + "depot" + matches[1] + "_" + matches[2] + "_" + change;
+                                        copies.push([ sourceFile, targetFile ]);
+                                    }
                                 }
                                 break;
                             }
@@ -349,11 +351,22 @@ if (argv["input"] && argv.repo && argv["output-branch"]) {
                                 added.push(copy[1]);
                                 // console.log(added.length, copies.length);
                                 if (added.length == copies.length) {
-                                    git("add", added, { cwd: argv.repo }, function() {
-                                        // console.log("commit git commit -m ", description.join("\n"), "--allow-empty-message", "--author=" + author, ("--date=" + commitDate));
-                                        git("commit", "-m", description.join("\n"), "--allow-empty-message", "--author=" + author + " <" + author + ">", "--date=" + commitDate);
-                                        nextChange();
-                                    });
+                                    if (deletes.length) {
+                                        git("rm", deletes, { cwd: argv.repo }, function() { add(); });
+                                    } else {
+                                        add();
+                                    }
+                                    function add() {
+                                        git("add", added, { cwd: argv.repo }, function() {
+                                            // console.log("commit git commit -m ", description.join("\n"), "--allow-empty-message", "--author=" + author, ("--date=" + commitDate));
+                                            git({ cwd: argv.repo }, "commit", "-m", description.join("\n"),
+                                                "--allow-empty-message", "--author=" + author + " <" + author + ">", "--date=" + commitDate,
+                                                function(data) {
+                                                    console.log("shit data", data);
+                                                    nextChange();
+                                                });
+                                        });
+                                    }
                                 }
                             });
                         });
