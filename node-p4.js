@@ -229,11 +229,36 @@ function git() {
 
 // launch("ls", {cwd: "/tmp/"}, function(out) { console.log(out); });
 
+function findFiles(dir) {
+    var results = [];
+    var list = fs.readdirSync(dir);
+    list.forEach(function(file) {
+        // console.log(file);
+        file = dir + '/' + file;
+        var stat = fs.statSync(file);
+        if (stat && stat.isDirectory()) {
+            results = results.concat(findFiles(file));
+        } else if (!/_[0-9]+_[0-9]+$/.exec(file)) {
+            results.push(file);
+        // } else {
+            // console.log(/_[0-9]+_[0-9]+$/.exec(file));
+        }
+    });
+    return results;
+}
+
 if (argv["input"] && argv.repo && argv["output-branch"]) {
     mkdir(argv.repo);
     git("init", {cwd: argv.repo}, function() {
         git("checkout", "-b", argv["output-branch"], {cwd: argv.repo}, function() {
-
+            var files = findFiles(argv.input);
+            files.forEach(function(file) {
+                var data = fs.readFileSync(file);
+                split(data.toString()).forEach(function(line) {
+                    console.log("line is", line, file);
+                });
+                process.exit(1);
+            });
         });
     });
 }
