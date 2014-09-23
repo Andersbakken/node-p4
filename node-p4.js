@@ -26,7 +26,7 @@ function split(str) {
 function p4() {
     var args = [];
     var cb;
-    var options = { split: true };
+    var options = {};
     for (var i=0; i<arguments.length; ++i) {
         if (arguments[i] instanceof Function) {
             cb = arguments[i];
@@ -59,7 +59,7 @@ function startNext()
             var stream = fs.createWriteStream(proc.options.output, { flags: 'w' });
             process.stdout.pipe(stream);
         }
-        if (proc.cb) {
+        if (proc.cb && !proc.options.nooutput) {
             process.stdout.on('data', function (data) {
                 stdout += data.toString();
             });
@@ -74,8 +74,8 @@ function startNext()
                 console.log("Process finished p4 " + proc.args.join(' '));
             }
             if (proc.cb) {
-                if (proc.options.split) {
-                    proc.cb(split(stdout));
+                if (proc.options.nooutput) {
+                    proc.cb();
                 } else {
                     proc.cb(stdout);
                 }
@@ -118,79 +118,87 @@ if (typeof argv.source != 'string') {
     process.exit(1);
 }
 
-function p4describe(change) {
+var describes = [];
+
+function p4describe(change, cb) {
+    if (describes[change]) {
+        cb(false);
+        return;
+    }
+    describes[change] = true;
     var file = outdir + "changes/" + change;
     if (!fs.existsSync(file)) {
         // console.log("CALLING DESCRIBE");
-        p4({ output: file }, "describe", "-s", change);
-        return 1;
+        p4({ output: file, nooutput: true }, "describe", "-s", change, function() { cb(true); });
+    } else {
+        cb(false);
     }
-    return 0;
 }
 
-function p4print(file, rev, change) {
+function p4print(file, rev, change, cb) {
     var out = mkpath(file, rev, change);
     // console.log(out);
     if (!fs.existsSync(out)) {
         // console.log("CALLING P4PRINT");
-        p4("print", "-o", out, (file + "#" + rev));
-        return 1;
+        p4({ nooutput: true }, "print", "-o", out, (file + "#" + rev), function() { cb(true); });
+    } else {
+        cb(false);
     }
-    return 0;
 }
 
 function p4filelog(p4path, cb) {
     var out = mkpath(p4path);
     ensureParentDir(out);
-    fs.readFile(out, function (err, data) {
-        if (err) {
-            p4({ output: out }, "filelog", p4path, cb);
-            // console.log("constructing filelog", p4path);
-        } else {
-            // console.log("got filelog from cache", p4path);
-            cb(split(data.toString()));
-        }
-    });
+    try {
+        var data = fs.readFileSync(out);
+        cb(split(data.toString()));
+    } catch (err) {
+        p4({ output: out }, "filelog", p4path, function(stdout) { cb(split(stdout)); });
+    }
 }
 
-p4("files", argv.source, function(files) {
-    // console.log("files " + files.length);
-    for (var f=0; f<files.length; ++f) {
-        var file = files[f];
-        if (!file.length)
-            continue;
-        var idx = file.indexOf('#');
-        var p4file = file.substr(0, idx);
-        if (argv.verbose)
-            console.log("Got file", p4file);
-        p4filelog(p4file, (function(p4file) {
-            return function(filelog) {
-                var count = 0;
-                for (var l=0; l<filelog.length; ++l) {
-                    var matches = /^.*#([0-9]+) change ([0-9]+) ([A-Za-z/]+)/.exec(filelog[l]);
+var sources = argv.source instanceof Array ? argv.source : [ argv.source ];
+console.log(sources);
+sources.forEach(function(source) {
+    p4("files", source, function(stdout) {
+        split(stdout).forEach(function(file) {
+            if (!file.length)
+                return;
+            var idx = file.indexOf('#');
+            var p4file = file.substr(0, idx);
+            if (argv.verbose)
+                console.log("Got file", p4file);
+            p4filelog(p4file, function(filelog) {
+                var operations = 0;
+                var changes = 0;
+                function logProcessed(processed) {
+                    setTimeout(function() {
+                        if (processed)
+                            ++changes;
+                        if (!--operations && changes) {
+                            console.log("processed", p4file, changes, "changes");
+                        }
+                        // console.log(processed, changes, operations);
+                    }, 0);
+                }
+
+                filelog.forEach(function(line) {
+                    var matches = /^.*#([0-9]+) change ([0-9]+) ([A-Za-z/]+)/.exec(line);
                     if (!matches) {
                         // console.log("NO MATCH", filelog[l]);
-                        continue;
+                        return;
                     }
-                    count += p4describe(matches[2]);
-                    // console.log(matches[2]);
+                    ++operations;
+                    // console.log("shitballs", p4file, operations);
+                    p4describe(matches[2], logProcessed);
                     if (matches[3].indexOf('delete') == -1) {
-                        console.log("Calling p4print(", p4file, matches[1], matches[2], matches[3]);
-                        count += p4print(p4file, matches[1], matches[2]);
+                        ++operations;
+                        p4print(p4file, matches[1], matches[2], logProcessed);
                     }
-                    // count += c;
-                    // if (// argv.verbose &&
-                    //     c) {
-                    //     console.log("processed", p4file, c);
-                    // }
-                }
-                if (count)
-                    console.log("processed", p4file, count, "changes");
-                // console.log(filelog);
-                // process.exit(0);
-            };
-        }(p4file)));
-    }
+                });
+            });
+        });
+    });
 });
 
 
