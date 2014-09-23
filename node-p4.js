@@ -11,7 +11,6 @@ process.on('uncaughtException', function (err) {
     process.exit(1);
 });
 
-
 var datadir = (argv["data-dir"] || ".") + "/";
 
 function split(str) {
@@ -38,73 +37,79 @@ function ensureParentDir(file) {
     } catch (err) {}
 }
 
-if (argv.source) {
-    var pending = [];
-    var liveProcesses = 0;
-    var max = 20;
-    function p4() {
-        var args = [];
-        var cb;
-        var options = {};
-        for (var i=0; i<arguments.length; ++i) {
-            if (arguments[i] instanceof Function) {
-                cb = arguments[i];
-            } else if (arguments[i] instanceof Array) {
-                args = args.concat(arguments[i]);
-            } else if (arguments[i] instanceof Object) {
-                options = arguments[i];
-            } else {
-                args.push(arguments[i]);
-            }
+var pending = [];
+var liveProcesses = 0;
+var max = 20;
+
+function launch() {
+    var args = [];
+    var cb;
+    var options = {};
+    var exec;
+    for (var i=0; i<arguments.length; ++i) {
+        if (arguments[i] instanceof Function) {
+            cb = arguments[i];
+        } else if (arguments[i] instanceof Object) {
+            options = arguments[i];
+        } else if (!exec) {
+            exec = arguments[i];
+        } else {
+            args.push(arguments[i]);
         }
-        pending.push({ args: args, options: options, cb: cb });
-        startNext();
     }
+    pending.push({ exec: exec, args: args, options: options, cb: cb });
+    startNext();
+}
 
-
-    function startNext()
-    {
-        while (pending.length && liveProcesses < max) {
-            ++liveProcesses;
-            var proc = pending.splice(0, 1)[0];
-            var process = spawn('p4', proc.args);
-            process.stdout.setEncoding('utf8');
-            var stdout = "";
-            // var stderr = "";
-            if (proc.options.output) {
-                ensureParentDir(proc.options.output);
-                var stream = fs.createWriteStream(proc.options.output, { flags: 'w' });
-                process.stdout.pipe(stream);
-            }
-            if (proc.cb && !proc.options.nooutput) {
-                process.stdout.on('data', function (data) {
-                    stdout += data.toString();
-                });
-            } else {
-                proc.disconnect();
-            }
-            // process.stderr.on('data', function (data) { stderr += data.toString(); });
-            process.on('close', function (code) {
-                --liveProcesses;
-                if (code != 0) {
-                    console.error("p4 error: \"p4 " + proc.args.join(' ') + "\": " + code); // + " :" + stderr);
-                }
-                if (argv.verbose) {
-                    console.log("Process finished p4 " + proc.args.join(' '));
-                }
-                if (proc.cb) {
-                    if (proc.options.nooutput) {
-                        proc.cb();
-                    } else {
-                        proc.cb(stdout);
-                    }
-
-                }
-                setTimeout(function() { startNext(); }, 0);
-            });
+function startNext()
+{
+    while (pending.length && liveProcesses < max) {
+        ++liveProcesses;
+        var proc = pending.splice(0, 1)[0];
+        var options = { cwd: undefined, env: process.env };
+        if (proc.options.cwd)
+            options.cwd = proc.options.cwd;
+        // console.log("shit", proc.exec, proc.args, options.cwd );
+        var p = spawn(proc.exec, proc.args, options);
+        var stdout = "";
+        var stderr = "";
+        if (proc.options.output) {
+            p.stdout.setEncoding('utf8');
+            ensureParentDir(proc.options.output);
+            var stream = fs.createWriteStream(proc.options.output, { flags: 'w' });
+            p.stdout.pipe(stream);
         }
-    };
+        if (proc.cb && !proc.options.nooutput) {
+            p.stdout.on('data', function (data) {
+                stdout += data.toString();
+            });
+        } else {
+            // p.disconnect();
+        }
+        p.stderr.on('data', function (data) { stderr += data.toString(); });
+        p.on('close', function (code) {
+            // console.log("shit", code);
+            --liveProcesses;
+            if (code != 0) {
+                console.error(proc.exec, "error: \"" + proc.exec + " " + proc.args.join(' ') + "\": " + code + " :" + stderr);
+            }
+            if (argv.verbose) {
+                console.log("Process finished:", proc.exec, proc.args.join(' '));
+            }
+            if (proc.cb) {
+                if (proc.options.nooutput) {
+                    proc.cb();
+                } else {
+                    proc.cb(stdout);
+                }
 
+            }
+            startNext();
+        });
+    }
+};
+
+if (argv.source) {
     function mkpath(p4path, rev, change) {
         var encoded = datadir + "depot" + p4path;
         ensureParentDir(encoded);
@@ -121,6 +126,15 @@ if (argv.source) {
     // }
 
     var describes = [];
+
+    function p4() {
+        var args = [];
+        args.push("p4");
+        for (var i=0; i<arguments.length; ++i) {
+            args.push(arguments[i]);
+        }
+        launch.apply(this, args);
+    }
 
     function p4describe(change, cb) {
         if (describes[change]) {
@@ -204,8 +218,24 @@ if (argv.source) {
     });
 }
 
-if (argv["slow-import"]) {
+function git() {
+    var args = [];
+    args.push("git");
+    for (var i=0; i<arguments.length; ++i) {
+        args.push(arguments[i]);
+    }
+    launch.apply(this, args);
+}
 
+// launch("ls", {cwd: "/tmp/"}, function(out) { console.log(out); });
+
+if (argv["input"] && argv.repo && argv["output-branch"]) {
+    mkdir(argv.repo);
+    git("init", {cwd: argv.repo}, function() {
+        git("checkout", "-b", argv["output-branch"], {cwd: argv.repo}, function() {
+
+        });
+    });
 }
 
 
