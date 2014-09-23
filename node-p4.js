@@ -113,7 +113,7 @@ function mkpath(p4path, rev, change) {
     }
 }
 
-if (typeof argv.source != 'string') {
+if (!argv.source) {
     console.error("No source");
     process.exit(1);
 }
