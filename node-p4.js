@@ -199,6 +199,10 @@ if (argv.source) {
                     }
 
                     filelog.forEach(function(line) {
+                        if (line.lastIndexOf('//', 0) == 0) {
+                            p4file = line;
+                            return;
+                        }
                         var matches = /^.*#([0-9]+) change ([0-9]+) ([A-Za-z/]+)/.exec(line);
                         if (!matches) {
                             // console.log("NO MATCH", filelog[l]);
